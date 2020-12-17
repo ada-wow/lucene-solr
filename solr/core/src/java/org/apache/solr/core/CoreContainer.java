@@ -1729,7 +1729,7 @@ public class CoreContainer implements Closeable {
         SolrCore oldCore = null;
         boolean success = false;
         try {
-         // solrCores.waitForLoadingCoreToFinish(name, 15000);
+
           ConfigSet coreConfig = coreConfigService.loadConfigSet(cd);
           log.info("Reloading SolrCore '{}' using configuration from {}", name, coreConfig.getName());
           DocCollection docCollection = null;

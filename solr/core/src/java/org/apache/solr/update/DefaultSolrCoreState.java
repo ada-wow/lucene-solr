@@ -318,11 +318,9 @@ public final class DefaultSolrCoreState extends SolrCoreState implements Recover
   @Override
   public void doRecovery(SolrCore core) {
     log.info("Do recovery for core {}", core.getName());
-    recoverying = true;
     CoreContainer corecontainer = core.getCoreContainer();
     CoreDescriptor coreDescriptor = core.getCoreDescriptor();
     Runnable recoveryTask = () -> {
-      boolean success = false;
       try {
         if (SKIP_AUTO_RECOVERY) {
           log.warn("Skipping recovery according to sys prop solrcloud.skip.autorecovery");
@@ -347,7 +345,7 @@ public final class DefaultSolrCoreState extends SolrCoreState implements Recover
           log.warn("Skipping recovery because Solr is shutdown");
           return;
         }
-        recoverying = true;
+
 
         // if we can't get the lock, another recovery is running
         // we check to see if there is already one waiting to go
@@ -386,6 +384,7 @@ public final class DefaultSolrCoreState extends SolrCoreState implements Recover
           log.info("Skipping recovery due to being closed");
           return;
         }
+        recoverying = true;
 
         recoveryThrottle.minimumWaitBetweenActions();
         recoveryThrottle.markAttemptingAction();
@@ -394,7 +393,7 @@ public final class DefaultSolrCoreState extends SolrCoreState implements Recover
         recoveryStrat.setRecoveringAfterStartup(recoveringAfterStartup);
 
         log.info("Running recovery");
-        success = true;
+
         recoveryStrat.run();
 
       } catch (AlreadyClosedException e) {

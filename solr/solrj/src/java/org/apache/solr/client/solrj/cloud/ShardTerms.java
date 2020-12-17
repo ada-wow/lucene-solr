@@ -126,7 +126,7 @@ public class ShardTerms implements MapWriter {
   public ShardTerms ensureHighestTermsAreNotZero() {
     if (maxTerm > 0) return null;
     else {
-      Map<String, Long> newValues = new ConcurrentHashMap<>(values);
+      Map<String, Long> newValues =  new ConcurrentHashMap<String, Long>(32, 0.75F, 32);
       for (String replica : values.keySet()) {
         newValues.put(replica, 1L);
       }

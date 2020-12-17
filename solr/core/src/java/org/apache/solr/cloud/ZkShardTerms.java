@@ -24,6 +24,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.locks.ReentrantLock;
@@ -124,7 +125,7 @@ public class ZkShardTerms implements Closeable {
 
     ShardTerms newTerms;
     while( (newTerms = terms.get().increaseTerms(leader, replicasNeedingRecovery)) != null) {
-      if (forceSaveTerms(newTerms) || isClosed.get()) return;
+      if (forceSaveTerms(newTerms)) return;
     }
   }
 
@@ -166,7 +167,7 @@ public class ZkShardTerms implements Closeable {
 
   public void close() {
     // no watcher will be registered
-    isClosed.set(true);
+    //isClosed.set(true);
 
     ParWork.close(listeners);
     listeners.clear();
@@ -211,7 +212,7 @@ public class ZkShardTerms implements Closeable {
         return true;
       }
       tries++;
-      if (tries > 60 || isClosed.get()) {
+      if (tries > 60) {
         log.warn("Could not save terms to zk within " + tries + " tries");
         return true;
       }
@@ -227,7 +228,7 @@ public class ZkShardTerms implements Closeable {
   void registerTerm(String coreNodeName) throws KeeperException, InterruptedException {
     ShardTerms newTerms;
     while ( (newTerms = terms.get().registerTerm(coreNodeName)) != null) {
-      if (forceSaveTerms(newTerms) || isClosed.get()) break;
+      if (forceSaveTerms(newTerms)) break;
     }
   }
 
@@ -239,14 +240,14 @@ public class ZkShardTerms implements Closeable {
   public void setTermEqualsToLeader(String coreNodeName) throws KeeperException, InterruptedException {
     ShardTerms newTerms;
     while ( (newTerms = terms.get().setTermEqualsToLeader(coreNodeName)) != null) {
-      if (forceSaveTerms(newTerms) || isClosed.get()) break;
+      if (forceSaveTerms(newTerms)) break;
     }
   }
 
   public void setTermToZero(String coreNodeName) throws KeeperException, InterruptedException {
     ShardTerms newTerms;
     while ( (newTerms = terms.get().setTermToZero(coreNodeName)) != null) {
-      if (forceSaveTerms(newTerms) || isClosed.get()) break;
+      if (forceSaveTerms(newTerms)) break;
     }
   }
 
@@ -256,7 +257,7 @@ public class ZkShardTerms implements Closeable {
   public void startRecovering(String coreNodeName) throws KeeperException, InterruptedException {
     ShardTerms newTerms;
     while ( (newTerms = terms.get().startRecovering(coreNodeName)) != null) {
-      if (forceSaveTerms(newTerms) || isClosed.get()) break;
+      if (forceSaveTerms(newTerms)) break;
     }
   }
 
@@ -266,7 +267,7 @@ public class ZkShardTerms implements Closeable {
   public void doneRecovering(String coreNodeName) throws KeeperException, InterruptedException {
     ShardTerms newTerms;
     while ( (newTerms = terms.get().doneRecovering(coreNodeName)) != null) {
-      if (forceSaveTerms(newTerms) || isClosed.get()) break;
+      if (forceSaveTerms(newTerms)) break;
     }
   }
 
@@ -281,7 +282,7 @@ public class ZkShardTerms implements Closeable {
   public void ensureHighestTermsAreNotZero() throws KeeperException, InterruptedException {
     ShardTerms newTerms;
     while ( (newTerms = terms.get().ensureHighestTermsAreNotZero()) != null) {
-      if (forceSaveTerms(newTerms) || isClosed.get()) break;
+      if (forceSaveTerms(newTerms)) break;
     }
   }
 
@@ -340,8 +341,23 @@ public class ZkShardTerms implements Closeable {
   public void refreshTerms() throws KeeperException {
     ShardTerms newTerms;
     try {
+      Watcher watcher = event -> {
+        // session events are not change events, and do not remove the watcher
+        if (Watcher.Event.EventType.None == event.getType()) {
+          return;
+        }
+        if (event.getType() == Watcher.Event.EventType.NodeCreated || event.getType() == Watcher.Event.EventType.NodeDataChanged) {
+          retryRegisterWatcher();
+          // Some events may be missed during register a watcher, so it is safer to refresh terms after registering watcher
+          try {
+            refreshTerms();
+          } catch (KeeperException e) {
+            log.warn("Could not refresh terms", e);
+          }
+        }
+      };
       Stat stat = new Stat();
-      byte[] data = zkClient.getData(znodePath, null, stat, true);
+      byte[] data = zkClient.getData(znodePath, watcher, stat, true);
       ConcurrentHashMap<String,Long> values = new ConcurrentHashMap<>((Map<String,Long>) Utils.fromJSON(data));
       log.info("refresh shard terms to zk version {}", stat.getVersion());
       newTerms = new ShardTerms(values, stat.getVersion());
@@ -365,19 +381,19 @@ public class ZkShardTerms implements Closeable {
       try {
         registerWatcher();
         return;
-      } catch (KeeperException.SessionExpiredException | KeeperException.AuthFailedException e) {
+      } catch (KeeperException.AuthFailedException e) {
         isClosed.set(true);
         log.error("Failed watching shard term for collection: {} due to unrecoverable exception", collection, e);
         return;
       } catch (KeeperException e) {
         log.warn("Failed watching shard term for collection: {}, retrying!", collection, e);
-//        try {
-//          zkClient.getConnectionManager().waitForConnected(zkClient.getZkClientTimeout());
-//        } catch (TimeoutException | InterruptedException te) {
-//          if (Thread.interrupted()) {
-//            throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, "Error watching shard term for collection: " + collection, te);
-//          }
-//        }
+        try {
+          zkClient.getConnectionManager().waitForConnected(zkClient.getZkClientTimeout());
+        } catch (TimeoutException | InterruptedException te) {
+          if (Thread.interrupted()) {
+            throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, "Error watching shard term for collection: " + collection, te);
+          }
+        }
       }
     }
   }
@@ -386,24 +402,10 @@ public class ZkShardTerms implements Closeable {
    * Register a watcher to the correspond ZK term node
    */
   private void registerWatcher() throws KeeperException {
-    Watcher watcher = event -> {
-      // session events are not change events, and do not remove the watcher
-      if (Watcher.Event.EventType.None == event.getType()) {
-        return;
-      }
-      if (event.getType() == Watcher.Event.EventType.NodeCreated || event.getType() == Watcher.Event.EventType.NodeDataChanged) {
-        retryRegisterWatcher();
-        // Some events may be missed during register a watcher, so it is safer to refresh terms after registering watcher
-        try {
-          refreshTerms();
-        } catch (KeeperException e) {
-          log.warn("Could not refresh terms", e);
-        }
-      }
-    };
+
     try {
       // exists operation is faster than getData operation
-      zkClient.exists(znodePath, watcher, true);
+      zkClient.exists(znodePath, null, true);
     } catch (InterruptedException e) {
       Thread.interrupted();
       throw new SolrException(SolrException.ErrorCode.SERVER_ERROR, "Error watching shard term for collection: " + collection, e);
@@ -427,9 +429,6 @@ public class ZkShardTerms implements Closeable {
             break;
           }
         } else  {
-          break;
-        }
-        if (isClosed.get()) {
           break;
         }
       }

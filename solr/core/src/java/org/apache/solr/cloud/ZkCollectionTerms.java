@@ -17,7 +17,6 @@
 
 package org.apache.solr.cloud;
 
-import org.apache.solr.common.AlreadyClosedException;
 import org.apache.solr.common.cloud.SolrZkClient;
 import org.apache.solr.common.util.IOUtils;
 import org.apache.solr.common.util.ObjectReleaseTracker;
@@ -52,11 +51,11 @@ class ZkCollectionTerms implements AutoCloseable {
     try {
       ZkShardTerms zkterms = null;
       if (!terms.containsKey(shardId)) {
-        if (closed) {
-          throw new AlreadyClosedException();
-        }
         zkterms = new ZkShardTerms(collection, shardId, zkClient);
         IOUtils.closeQuietly(terms.put(shardId, zkterms));
+        if (closed) {
+          IOUtils.closeQuietly(zkterms);
+        }
         return zkterms;
       }
       return terms.get(shardId);
@@ -76,6 +75,7 @@ class ZkCollectionTerms implements AutoCloseable {
   }
 
   public void register(String shardId, String coreNodeName) throws Exception {
+    if (closed) return;
     getShard(shardId).registerTerm(coreNodeName);
   }
 
