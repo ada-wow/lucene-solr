@@ -79,14 +79,14 @@ case "`uname`" in
     nonstop=true
     ;;
 esac
-
 # Determine the Java command to use to start the JVM.
 if [ -n "$JAVA_HOME" ] ; then
     if [ -x "$JAVA_HOME/jre/sh/java" ] ; then
         # IBM's JDK on AIX uses strange locations for the executables
         JAVACMD="$JAVA_HOME/jre/sh/java"
     else
-        JAVACMD="$JAVA_HOME/bin/java"
+        #JAVACMD="$JAVA_HOME/bin/java"
+        JAVACMD="/Users/ada/Downloads/jdk-14.0.2.jdk/Contents/Home/bin/java"
     fi
     if [ ! -x "$JAVACMD" ] ; then
         die "ERROR: JAVA_HOME is set to an invalid directory: $JAVA_HOME
