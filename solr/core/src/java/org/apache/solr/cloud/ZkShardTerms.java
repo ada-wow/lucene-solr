@@ -106,7 +106,7 @@ public class ZkShardTerms implements Closeable {
     this.shard = shard;
     this.zkClient = zkClient;
     try {
-      refreshTerms();
+      refreshTerms(true);
     } catch (KeeperException e) {
       throw new IOException(e);
     }
@@ -330,7 +330,7 @@ public class ZkShardTerms implements Closeable {
       return true;
     } catch (KeeperException.BadVersionException e) {
       log.info("Failed to save terms, version is not a match, retrying version={}", newTerms.getVersion());
-      refreshTerms();
+      refreshTerms(false);
     }
     return false;
   }
@@ -338,7 +338,7 @@ public class ZkShardTerms implements Closeable {
   /**
    * Fetch latest terms from ZK
    */
-  public void refreshTerms() throws KeeperException {
+  public void refreshTerms(boolean setWatch) throws KeeperException {
     ShardTerms newTerms;
     try {
       Watcher watcher = event -> {
@@ -350,14 +350,14 @@ public class ZkShardTerms implements Closeable {
           retryRegisterWatcher();
           // Some events may be missed during register a watcher, so it is safer to refresh terms after registering watcher
           try {
-            refreshTerms();
+            refreshTerms(true);
           } catch (KeeperException e) {
             log.warn("Could not refresh terms", e);
           }
         }
       };
       Stat stat = new Stat();
-      byte[] data = zkClient.getData(znodePath, watcher, stat, true);
+      byte[] data = zkClient.getData(znodePath, setWatch ? watcher : null, stat, true);
       ConcurrentHashMap<String,Long> values = new ConcurrentHashMap<>((Map<String,Long>) Utils.fromJSON(data));
       log.info("refresh shard terms to zk version {}", stat.getVersion());
       newTerms = new ShardTerms(values, stat.getVersion());
